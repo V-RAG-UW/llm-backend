@@ -208,7 +208,7 @@ def call_rag_pipeline(visual_query, audio_query):
     except Exception as e:
         return {"error": str(e)}, 500
 
-BASE_LLM_URL= "https://4d0a-72-33-2-197.ngrok-free.app"
+BASE_LLM_URL= "https://635d-72-33-2-197.ngrok-free.app/"
 def generate_completions(question, reference_frame, scene_description, rag_metadata):
     try:
         # Prepare data for calling the RAG pipeline
