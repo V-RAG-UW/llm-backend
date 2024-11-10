@@ -39,12 +39,12 @@ This API enables users to upload video files, process them, and retrieve indexed
 ### 2. RAG Pipeline Search
 - **Endpoint**: `/rag_pipeline`
 - **Method**: `POST`
-- **Description**: Processes a query using the RAG (Retrieval-Augmented Generation) pipeline to retrieve scenes or spoken words from the indexed video database and returns the processed results.
+- **Description**: Processes a query using the RAG (Retrieval-Augmented Generation) pipeline to retrieve scenes and/or spoken words from the indexed video database and returns the processed results.
 - **Request Body**:
   - **Type**: `application/json`
   - **Parameters**:
-    - `query` (string, required): The search query for retrieval.
-    - `type` (string, required): The type of search to perform (`"scene"` or `"spoken_word"`).
+    - `visual_query` (string, required): The search query for visual_data (scene descriptions).
+    - `audio_query` (string, required): The search query for spoken word data retrieval(audio transcriptions).
 - **Responses**:
   - **Success** (`200`):
     ```json
@@ -53,13 +53,14 @@ This API enables users to upload video files, process them, and retrieve indexed
       "result": [
         {
           "title": "<video_title>",
-          "text": "<combined_text>",
+          "text": "<combined_scene_descriptions>",
           "scenes": [
             {
               "scene_id": "<scene_id>",
               "frames": ["<base64_encoded_frame1>", "<base64_encoded_frame2>", ...]
             }
-          ]
+          ],
+          "transcription": "<audio_transcription of the video>",
         }
       ]
     }
@@ -98,7 +99,7 @@ print(response.json())
 ### RAG Pipeline Search
 **cURL Command**:
 ```bash
-curl -X POST http://<your-server-url>:6969/rag_pipeline -H "Content-Type: application/json" -d '{"query": "Find scene with character X", "type": "scene"}'
+curl -X POST http://<your-server-url>:6969/rag_pipeline -H "Content-Type: application/json" -d '{"query": "Find scene with character X", "type": "<scene or nothing>"}'
 ```
 
 **Python Code**:

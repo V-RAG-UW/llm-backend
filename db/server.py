@@ -68,10 +68,11 @@ async def convert_frame_to_base64_async(frame_url: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(frame_url) as response:
-                response.raise_for_status()
-                content = await response.read()
-                encoded_string = base64.b64encode(content).decode('utf-8')
-                return encoded_string
+                # response.raise_for_status()
+                # content = await response.read()
+                # encoded_string = base64.b64encode(content).decode('utf-8')
+                # return encoded_string
+                return frame_url
     except Exception as e:
         return f"Error encoding frame: {str(e)}"
 
@@ -82,7 +83,7 @@ async def process_result_async(result: NodeWithScore, conn) -> dict:
     video = conn.get_collection().get_video(result.metadata["video_id"])
     # Print with expanded length
     title = result.node.metadata["title"]
-    text = result.text
+    text = "" # result.text apparently returns the transcript if its a audio query. But we already do it at the bottom so no need!
     scene_collection = video.get_scene_collection(video.list_scene_collection()[0]["scene_collection_id"])
     scenes = scene_collection.scenes
     frames = []
@@ -100,31 +101,67 @@ async def process_result_async(result: NodeWithScore, conn) -> dict:
     return {
         "title": title,
         "text": text,
-        "scenes": frames
+        "scenes": frames,
+        "transcription": video.get_transcript_text()
     }
 
-async def retrieval(query: str, type):
-    if type == 'scene':
-        results: List[NodeWithScore] = retriever_scene.retrieve(query)
-    else:
-        results: List[NodeWithScore] = retriever_spoken_words.retrieve(query)
-    tasks = [process_result_async(result, conn) for result in results]
+def union_nodes(list1: List[NodeWithScore], list2: List[NodeWithScore]) -> List[NodeWithScore]:
+    # Create a dictionary to store nodes by their video_id
+    node_dict = {}
+
+    # Add nodes from the first list to the dictionary
+    for node in list1:
+        video_id = node.metadata["video_id"]
+        if video_id not in node_dict:
+            node_dict[video_id] = node
+
+    # Add nodes from the second list, avoiding duplicates by video_id
+    for node in list2:
+        video_id = node.metadata["video_id"]
+        if video_id not in node_dict:
+            node_dict[video_id] = node
+
+    # Return the unique nodes as a list
+    return list(node_dict.values())
+
+# Usage in the retrieval function
+async def retrieval(visual_query: str, audio_query: str) -> List[dict]:
+    # Run both retrievals asynchronously in separate threads
+    spoken_words_task = asyncio.to_thread(retriever_spoken_words.retrieve, audio_query) if audio_query else []
+    scene_task = asyncio.to_thread(retriever_scene.retrieve, visual_query) if visual_query else []
+
+    # Await the tasks concurrently
+    spoken_results, scene_results = await asyncio.gather(
+        spoken_words_task if spoken_words_task else [],
+        scene_task if scene_task else []
+    )
+
+    print("Length of spoken results:", len(spoken_results))
+    print("Length of scene results:", len(scene_results))
+
+    # Combine results using the custom union function
+    combined_results = union_nodes(spoken_results, scene_results)
+
+    # Process the combined results
+    tasks = [process_result_async(result, conn) for result in combined_results]
     response = await asyncio.gather(*tasks)
+
     return response
+
 
 @app.route('/rag_pipeline', methods=['POST'])
 async def search_rag():
     try:
-        query = request.json.get('query')
-        type = request.json.get('type')
+        visual_query = request.json.get('visual_query')
+        audio_query = request.json.get('audio_query')
         
-        if not query:
+        if not visual_query or not audio_query:
             return jsonify({"error": "No search query provided"}), 400
         
         # Start benchmark timing
         start_time = time.time()
         
-        result = await retrieval(query, type)
+        result = await retrieval(audio_query=audio_query, visual_query=visual_query)
         
         # End benchmark timing
         end_time = time.time()
