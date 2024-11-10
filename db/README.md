@@ -59,7 +59,8 @@ This API enables users to upload video files, process them, and retrieve indexed
               "scene_id": "<scene_id>",
               "frames": ["<base64_encoded_frame1>", "<base64_encoded_frame2>", ...]
             }
-          ]
+          ],
+          "transcription": "<audio_transcription of the video>",
         }
       ]
     }
@@ -98,7 +99,7 @@ print(response.json())
 ### RAG Pipeline Search
 **cURL Command**:
 ```bash
-curl -X POST http://<your-server-url>:6969/rag_pipeline -H "Content-Type: application/json" -d '{"query": "Find scene with character X", "type": "scene"}'
+curl -X POST http://<your-server-url>:6969/rag_pipeline -H "Content-Type: application/json" -d '{"query": "Find scene with character X", "type": "<scene or nothing>"}'
 ```
 
 **Python Code**:
