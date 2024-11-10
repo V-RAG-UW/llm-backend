@@ -10,10 +10,12 @@ from werkzeug.utils import secure_filename
 import videodb
 from videodb import SceneExtractionType, IndexType
 from llama_index.retrievers.videodb import VideoDBRetriever
-
+from pyngrok import ngrok
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
-
+port = 6969
+endpoint = ngrok.connect(port).public_url
+print(endpoint)
 # Initialize Flask app
 app = Flask(__name__)
 

@@ -176,7 +176,7 @@ def process_video():
     return Response(completions, content_type='text/plain')
 
 
-BASE_DB_URL = "http://127.0.0.1:6969"
+BASE_DB_URL = "http://0.0.0.0:6969"
 def call_rag_pipeline(visual_query, audio_query):
     try:
         logger.debug(f"Piping to VRAG with visual query {visual_query}\n\n audio query {audio_query}")
