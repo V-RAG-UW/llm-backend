@@ -165,5 +165,5 @@ def handle_http_request():
     return response
 
 if __name__=="__main__":
-    app.run(port=5000)
+    app.run(port=port)
     # play_sample_stream() # uncomment this to test run a static stream
