@@ -12,6 +12,7 @@ import requests
 import base64
 import threading
 import ffmpeg
+import json
 import os
 from huggingface_hub import hf_hub_download
 from transformers import pipeline
@@ -135,7 +136,7 @@ def getMetaData(video):
         'key_frame': key_frame_base64,
     }
     
-    return metadata
+    return metadata, mp4_path # mp4 path because
 
 def upload_video_non_blocking(video_path):
     def upload_video():
@@ -158,10 +159,9 @@ def process_video():
     if 'video' not in request.files:
         return jsonify({"error": "No video file provided"}), 400
     video_file = request.files['video']
-    video_path = f"/tmp/{video_file.filename}"
     # video_file.save(video_path)
 
-    metadata = getMetaData(video_file)
+    metadata, mp4path = getMetaData(video_file)
     logger.debug(f"Input MetaData\n: {metadata}")
     rag_response = call_rag_pipeline(visual_query=metadata["description"], audio_query=metadata["transcription"])
     if isinstance(rag_response, tuple):
@@ -170,20 +170,20 @@ def process_video():
     completions = generate_completions(question=metadata["transcription"], reference_frame=metadata["key_frame"], scene_description=metadata["description"], rag_metadata=rag_response)
     
     # Start non-blocking upload operation
-    upload_video_non_blocking(video_path)
+    upload_video_non_blocking(mp4path)
 
     # Stream the response from generate_completions
     return Response(completions, content_type='text/plain')
 
 
-BASE_DB_URL = "http://0.0.0.0:6969"
+BASE_DB_URL = "https://9f5c-2604-2b40-2181-22-1170-c0c8-5269-24d4.ngrok-free.app"
 def call_rag_pipeline(visual_query, audio_query):
     try:
         logger.debug(f"Piping to VRAG with visual query {visual_query}\n\n audio query {audio_query}")
         # Prepare the payload for the RAG pipeline API
         payload = {
-            "visual_query": visual_query,
-            "audio_query": audio_query
+            "visual_query": json.dumps(visual_query),
+            "audio_query": json.dumps(audio_query)
         }
         
         # Send POST request to the localhost RAG pipeline endpoint
@@ -208,13 +208,13 @@ def call_rag_pipeline(visual_query, audio_query):
     except Exception as e:
         return {"error": str(e)}, 500
 
-BASE_LLM_URL= "https://6e9a-72-33-2-197.ngrok-free.app"
+BASE_LLM_URL= "https://4d0a-72-33-2-197.ngrok-free.app"
 def generate_completions(question, reference_frame, scene_description, rag_metadata):
     try:
         # Prepare data for calling the RAG pipeline
         payload = {
             "question": question,
-            "reference_frame": reference_frame,
+            "reference_frame": f"data:image/png;base64,{reference_frame}",
             "desc": scene_description,
             "metadata": rag_metadata,
         }
