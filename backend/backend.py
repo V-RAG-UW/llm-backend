@@ -48,13 +48,13 @@ def convert_to_mp4(video_path):
             (
                 ffmpeg
                 .input(video_path)
-                .output(mp4_path, vcodec='libx264', acodec='aac')
+                .output(mp4_path, vcodec='mpeg4', acodec='aac')
                 .run(overwrite_output=True)
             )
-            os.remove(video_path)  # Remove the original webm file
+            # os.remove(video_path)  # Remove the original webm file
             return mp4_path
         return video_path  # Return original path if not webm
-    except ffmpeg.Error as e:
+    except Exception as e:
         logger.error(f"Error converting video: {e}")
         raise Exception("Failed to convert video to mp4")
 
@@ -66,7 +66,7 @@ def read_video_cv2(video_path, num_frames=10):
     
     # Calculate frame indices to sample
     indices = np.linspace(0, total_frames-1, num_frames, dtype=int)
-    
+    logger.error(f"total frames: {total_frames}")
     for frame_idx in indices:
         # Set frame position
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -118,11 +118,17 @@ def getDescription(video_path):
 
 def getMetaData(video):
     logger.debug("About to read webm")
-    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as temp_webm_file:
-        temp_webm_path = temp_webm_file.name
-        temp_webm_file.write(video.read())
-        logger.debug("Finished Reading webm")
-    desc, key_frame_base64 = getDescription(temp_webm_path)
+    # Create a temporary file and ensure it's closed before further processing
+    temp_webm_file = tempfile.NamedTemporaryFile(suffix=".webm", delete=False)
+    temp_webm_path = temp_webm_file.name
+    temp_webm_file.write(video.read())
+    temp_webm_file.close()    
+    logger.debug("Finished Reading webm")
+    
+    # Convert webm to mp4
+    mp4_path = convert_to_mp4(temp_webm_path)
+    logger.debug("Done converting to mp4.")
+    desc, key_frame_base64 = getDescription(mp4_path)
     metadata = {
         "transcription": getTranscription(temp_webm_path),
         "description": desc,
@@ -153,7 +159,7 @@ def process_video():
         return jsonify({"error": "No video file provided"}), 400
     video_file = request.files['video']
     video_path = f"/tmp/{video_file.filename}"
-    video_file.save(video_path)
+    # video_file.save(video_path)
 
     metadata = getMetaData(video_file)
     logger.debug(f"Input MetaData\n: {metadata}")
@@ -173,7 +179,7 @@ def process_video():
 BASE_DB_URL = "http://127.0.0.1:6969"
 def call_rag_pipeline(visual_query, audio_query):
     try:
-        logger.debug("Piping to VRAG with visual query {visual_query}\n\n audio query {audio_query}")
+        logger.debug(f"Piping to VRAG with visual query {visual_query}\n\n audio query {audio_query}")
         # Prepare the payload for the RAG pipeline API
         payload = {
             "visual_query": visual_query,
