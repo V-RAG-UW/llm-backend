@@ -12,7 +12,7 @@ from videodb import SceneExtractionType, IndexType
 from llama_index.retrievers.videodb import VideoDBRetriever
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # Initialize Flask app
 app = Flask(__name__)
