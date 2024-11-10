@@ -100,7 +100,8 @@ async def process_result_async(result: NodeWithScore, conn) -> dict:
     return {
         "title": title,
         "text": text,
-        "scenes": frames
+        "scenes": frames,
+        "transcription": video.get_transcript_text()
     }
 
 async def retrieval(query: str, type):
