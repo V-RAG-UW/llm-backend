@@ -121,15 +121,19 @@ Ensure that the following environment variables are set for the server:
 ## Required Packages
 Include the following in your `requirements.txt`:
 ```plaintext
-flask>=2.0.0
+flask>=2.3.0
 aiohttp>=3.8.0
-werkzeug>=2.0.0
-videodb
-llama_index
+werkzeug>=2.3.0
 python-dotenv>=0.19.0
+videodb
+llama_index 
+llama-index-retrievers-videodb
 ```
 
 ## Running the Server
+```bash
+pip install -r "requirements.txt"
+```
 Run the server using:
 ```bash
 python server.py
