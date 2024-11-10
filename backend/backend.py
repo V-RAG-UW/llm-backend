@@ -9,6 +9,7 @@ import torch
 import numpy as np
 import tempfile
 import requests
+import base64
 from huggingface_hub import hf_hub_download
 from transformers import pipeline
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
@@ -65,6 +66,11 @@ def getTranscription(video_path):
 def getDescription(video_path):
     # Read 10 evenly spaced frames from video
     video = read_video_cv2(video_path, num_frames=10)
+    key_frame = video[4]
+
+    # Encode the key frame in base64
+    _, buffer = cv2.imencode('.jpg', key_frame)
+    key_frame_base64 = base64.b64encode(buffer).decode('utf-8')
     
     conversation = [
         {
@@ -86,16 +92,19 @@ def getDescription(video_path):
     out = model.generate(**inputs, max_new_tokens=200)
     ret = processor.batch_decode(out, skip_special_tokens=True, clean_up_tokenization_spaces=True)
     logger.debug(f"disc: {ret[0].split("ASSISTANT:")[1].strip()}")
-    return ret[0].split("ASSISTANT:")[1].strip()
+    return ret[0].split("ASSISTANT:")[1].strip(), key_frame_base64
+
 def getMetaData(video):
     logger.debug("About to read webm")
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as temp_webm_file:
         temp_webm_path = temp_webm_file.name
         temp_webm_file.write(video.read())
         logger.debug("Finished Reading webm")
+    desc, key_frame_base64 = getDescription(temp_webm_path)
     metadata = {
         "transcription": getTranscription(temp_webm_path),
-        "description": getDescription(temp_webm_path)
+        "description": desc,
+        'key_frame': key_frame_base64,
     }
     
     return metadata
@@ -107,12 +116,15 @@ def process_video():
         return jsonify({"error": "No video file provided"}), 400
     video_file = request.files['video']
     metadata = getMetaData(video_file)
+    logger.debug(f"Input MetaData\n: {metadata}")
+
     rag_response = call_rag_pipeline(visual_query=metadata["description"], audio_query=metadata["transcription"])
     if isinstance(rag_response, tuple):
         return jsonify(rag_response[0]), rag_response[1]
-    
-    logger.debug(f"final data: {metadata}")
-    return jsonify(metadata), 200
+    completions = generate_completions(question=metadata["transcription"], reference_frame=metadata["key_frame"], scene_description=metadata["description"], rag_metadata=rag_response)
+    if isinstance(completions, tuple):
+        return jsonify(completions[0]), completions[1]
+    return jsonify(completions), 200
 
 BASE_DB_URL = "http://127.0.0.1:6969"
 def call_rag_pipeline(visual_query, audio_query):
