@@ -1,7 +1,7 @@
 import uuid
 import logging
 from pyngrok import ngrok
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import av
 import cv2
@@ -10,6 +10,9 @@ import numpy as np
 import tempfile
 import requests
 import base64
+import threading
+import ffmpeg
+import os
 from huggingface_hub import hf_hub_download
 from transformers import pipeline
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
@@ -36,6 +39,25 @@ endpoint = ngrok.connect(port).public_url
 print(endpoint)
 app = Flask(__name__)
 CORS(app)
+
+def convert_to_mp4(video_path):
+    try:
+        # Check if the video is in webm format and convert to mp4
+        if video_path.endswith('.webm'):
+            mp4_path = video_path.replace('.webm', '.mp4')
+            (
+                ffmpeg
+                .input(video_path)
+                .output(mp4_path, vcodec='libx264', acodec='aac')
+                .run(overwrite_output=True)
+            )
+            os.remove(video_path)  # Remove the original webm file
+            return mp4_path
+        return video_path  # Return original path if not webm
+    except ffmpeg.Error as e:
+        logger.error(f"Error converting video: {e}")
+        raise Exception("Failed to convert video to mp4")
+
 def read_video_cv2(video_path, num_frames=10):
     frames = []
     cap = cv2.VideoCapture(video_path)
@@ -109,26 +131,49 @@ def getMetaData(video):
     
     return metadata
 
+def upload_video_non_blocking(video_path):
+    def upload_video():
+        try:
+            with open(video_path, 'rb') as video_file:
+                files = {'video': video_file}
+                response = requests.post(f'{BASE_DB_URL}/upload_video', files=files)
+                if response.status_code == 201:
+                    logger.info("Video uploaded and indexed successfully")
+                else:
+                    logger.error(f"Error uploading video: {response.text}")
+        except Exception as e:
+            logger.error(f"Failed to upload video: {e}")
+    
+    threading.Thread(target=upload_video).start()
+
 @app.route('/process_video', methods=['POST'])
 def process_video():
     logger.debug("Obtained a request")
     if 'video' not in request.files:
         return jsonify({"error": "No video file provided"}), 400
     video_file = request.files['video']
+    video_path = f"/tmp/{video_file.filename}"
+    video_file.save(video_path)
+
     metadata = getMetaData(video_file)
     logger.debug(f"Input MetaData\n: {metadata}")
-
     rag_response = call_rag_pipeline(visual_query=metadata["description"], audio_query=metadata["transcription"])
     if isinstance(rag_response, tuple):
         return jsonify(rag_response[0]), rag_response[1]
+    
     completions = generate_completions(question=metadata["transcription"], reference_frame=metadata["key_frame"], scene_description=metadata["description"], rag_metadata=rag_response)
-    if isinstance(completions, tuple):
-        return jsonify(completions[0]), completions[1]
-    return jsonify(completions), 200
+    
+    # Start non-blocking upload operation
+    upload_video_non_blocking(video_path)
+
+    # Stream the response from generate_completions
+    return Response(completions, content_type='text/plain')
+
 
 BASE_DB_URL = "http://127.0.0.1:6969"
 def call_rag_pipeline(visual_query, audio_query):
     try:
+        logger.debug("Piping to VRAG with visual query {visual_query}\n\n audio query {audio_query}")
         # Prepare the payload for the RAG pipeline API
         payload = {
             "visual_query": visual_query,
@@ -136,12 +181,13 @@ def call_rag_pipeline(visual_query, audio_query):
         }
         
         # Send POST request to the localhost RAG pipeline endpoint
-        response = requests.post('http://localhost/rag_pipeline', json=payload)
+        response = requests.post(f'{BASE_DB_URL}/rag_pipeline', json=payload)
         
         # Check for successful response
         if response.status_code == 200:
             return response.json()
         else:
+            logger.debug(f"RAG error with {response.status_code}:{response.text}...\n")
             # Ensure the response is JSON or provide detailed feedback
             if 'application/json' in response.headers.get('Content-Type', ''):
                 return {"error": response.json().get("error", "An unknown error occurred")}, response.status_code
@@ -156,7 +202,7 @@ def call_rag_pipeline(visual_query, audio_query):
     except Exception as e:
         return {"error": str(e)}, 500
 
-BASE_LLM_URL= "https://311f-72-33-2-197.ngrok-free.app/"
+BASE_LLM_URL= "https://6e9a-72-33-2-197.ngrok-free.app"
 def generate_completions(question, reference_frame, scene_description, rag_metadata):
     try:
         # Prepare data for calling the RAG pipeline
@@ -166,17 +212,22 @@ def generate_completions(question, reference_frame, scene_description, rag_metad
             "desc": scene_description,
             "metadata": rag_metadata,
         }
+        logger.debug(f"Generating Completions on query {question}...\n")
         
         # Send a POST request to the /get_response endpoint
-        response = requests.post(f'{BASE_LLM_URL}/get_response', json=payload)
-        
-        # Check the response status code
-        if response.status_code == 200:
-            return response.text  # Return the response as a string
-        else:
-            return f"Error: Received status code {response.status_code} with message: {response.text}"
+        with requests.post(f'{BASE_LLM_URL}/get_response', json=payload, stream=True) as response:
+            if response.status_code == 200:
+                # Stream the response
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        logger.debug(chunk)
+                        yield chunk.decode('utf-8')
+            else:
+                logger.debug(f"Completions error with {response.status_code}:{response.text}...\n")
+                yield f"Error: Received status code {response.status_code} with message: {response.text}"
     except Exception as e:
-        return f"Error: {str(e)}"
+        logger.debug(f"Completions error with {str(e)}.\n")
+        yield f"Error: {str(e)}"
 
 
 if __name__ == '__main__':
