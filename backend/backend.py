@@ -1,5 +1,8 @@
+import uuid
+from pyngrok import ngrok
 from flask import Flask, request, jsonify
 import av
+import cv2
 import torch
 import numpy as np
 import tempfile
@@ -19,45 +22,53 @@ else:
     device = "cpu" 
 
 print(f"Using device: {device}")
-
+port = 5000
+endpoint = ngrok.connect(port).public_url
+print(endpoint)
 app = Flask(__name__)
 
-def read_video_pyav(container, indices):
+def read_video_cv2(video_path, num_frames=10):
     frames = []
-    container.seek(0)
-    start_index = indices[0]
-    end_index = indices[-1]
-    for i, frame in enumerate(container.decode(video=0)):
-        if i > end_index:
-            break
-        if i >= start_index and i in indices:
+    cap = cv2.VideoCapture(video_path)
+    # Get total frames
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Calculate frame indices to sample
+    indices = np.linspace(0, total_frames-1, num_frames, dtype=int)
+    
+    for frame_idx in indices:
+        # Set frame position
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if ret:
+            # Convert BGR to RGB
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(frame)
-    return np.stack([x.to_ndarray(format="rgb24") for x in frames])
+    
+    cap.release()
+    return np.stack(frames)
+
 def getTranscription(video_path):
     return whisper(video_path)
-def getDescription(video_path):
-    container = av.open(video_path)
-    total_frames = container.streams.video[0].frames
-    indices = np.arange(0, total_frames, total_frames / 10).astype(int)
-    video = read_video_pyav(container, indices)
 
+def getDescription(video_path):
+    # Read 10 evenly spaced frames from video
+    video = read_video_cv2(video_path, num_frames=10)
+    
     conversation = [
         {
-
-            "role": "system",
+            "role": "system", 
             "content": [
                 {"type": "text", "text": "You are given an video processed as a sequence to 15 images, Summarize the video, remembering to note the details and the key events that happen in the video (appearance, gesture, motion and more). Only output the summarization and nothing else."},
-                ],
+            ],
         },
         {
-
             "role": "user",
             "content": [
                 {"type": "video"},
-                ],
+            ],
         },
     ]
-    
 
     prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
     inputs = processor(text=prompt, videos=video, return_tensors="pt").to(device)
@@ -70,7 +81,6 @@ def getMetaData(video):
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_video_file:
         temp_video_path = temp_video_file.name
         temp_video_file.write(video.read())  # Assuming 'video' is a file-like object
-
     metadata = {
         "transcription": getTranscription(temp_video_path),
         "description": getDescription(temp_video_path)
@@ -80,6 +90,7 @@ def getMetaData(video):
 
 @app.route('/process_video', methods=['POST'])
 def process_video():
+    print(f"I hate certain minorities: {request.files}")
     if 'video' not in request.files:
         return jsonify({"error": "No video file provided"}), 400
     
