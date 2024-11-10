@@ -129,15 +129,17 @@ def handle_stream(question, reference_frame, desc, metadata):
     global stream_list
     context = generate_context(metadata, reference_frame)
     rag_chain = prompt | llama | StrOutputParser()
-    generation = rag_chain.invoke({"context": context, "desc": {desc}, "stream_content": stream_list, "question": question, "length": 2, "stream": True})
-    for part in generation:
-        yield f"{part}"
+    generation = []
+    for part in rag_chain.stream({"context": context, "desc": {desc}, "stream_content": stream_list, "question": question, "length": 2}):
+        yield json.dumps({"description": part})
+        generation.append(part)
+    generation = "".join(generation)
         
     stream_list.append({"User input":question, "LLM response":generation})
     if len(stream_list)>10:
         stream_list = stream_list[-10:]
     
-    yield "[DONE]"
+    yield json.dumps({"description": ""})
 
 def play_sample_stream():
     user_input = [
@@ -163,7 +165,7 @@ def play_sample_stream():
         # Collect the response chunks as they come in
         print(f"A: ", end="")
         for chunk in answer_generator:
-            print(chunk, end="")  # This will print the streamed responses, including [DONE]
+            print(json.loads(chunk)['description'], end="")  # This will print the streamed responses, including [DONE]
         print("\n")  # Add a blank line after each Q&A for readability
 
 @app.route('/get_response', methods=['POST'])
