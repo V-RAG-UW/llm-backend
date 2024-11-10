@@ -12,18 +12,18 @@ import threading
 from PIL import Image
 from io import BytesIO
 import requests
-
+from flask_cors import CORS
 from pyngrok import ngrok
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 
 port = 4567
 endpoint = ngrok.connect(port).public_url
 print(endpoint)
 app = Flask(__name__)
-
+CORS(app)
 gpt = ChatOpenAI(model="gpt-4o-mini")
 llama = ChatOllama(model="llama3.2", temperature=0)
-stream = []
+stream_list = []
 
 instruction = '''
 Compare a single image of the user to reference images extracted from a video of the same user, focusing on:
@@ -118,7 +118,7 @@ def handle_stream(question, reference_frame, desc, metadata):
     {context}
     
     #DIALOGUE
-    {stream}
+    {stream_content}
     
     #RESPONSE
     Answer length in sentence: {length}
@@ -126,13 +126,18 @@ def handle_stream(question, reference_frame, desc, metadata):
     <|eot_id|><|start_header_id|>assistant<|end_header_id|>
     """
     )
+    global stream_list
     context = generate_context(metadata, reference_frame)
     rag_chain = prompt | llama | StrOutputParser()
-    generation = rag_chain.invoke({"context": context, "desc": {desc}, "stream": stream, "question": question, "length": 2})
-    stream.append({"User input":question, "LLM response":generation})
-    if len(stream>10):
-        stream = stream[-10:]
-    return generation
+    generation = rag_chain.invoke({"context": context, "desc": {desc}, "stream_content": stream_list, "question": question, "length": 2, "stream": True})
+    for part in generation:
+        yield f"{part}"
+        
+    stream_list.append({"User input":question, "LLM response":generation})
+    if len(stream_list)>10:
+        stream_list = stream_list[-10:]
+    
+    yield "[DONE]"
 
 def play_sample_stream():
     user_input = [
@@ -147,23 +152,36 @@ def play_sample_stream():
     ]
     reference_frame = pil_to_base64(Image.open('sample/face.png'))
     desc = "a person"
+    
     with open("sample/log.txt", "r") as f:
         metadata = json.load(f)
+    
     for question in user_input:
-        answer = handle_stream(question, reference_frame, desc, metadata)
         print(f"Q: {question}")
-        print(f"A: {answer}\n")
+        # Call handle_stream to get the generator and process each streamed chunk
+        answer_generator = handle_stream(question, reference_frame, desc, metadata)
+        # Collect the response chunks as they come in
+        print(f"A: ", end="")
+        for chunk in answer_generator:
+            print(chunk, end="")  # This will print the streamed responses, including [DONE]
+        print("\n")  # Add a blank line after each Q&A for readability
 
 @app.route('/get_response', methods=['POST'])
 def handle_http_request():
     input_json = request.json
     question = input_json['question'] # string
-    reference_frame = input_json['qureference_frameestion'] # byte64 img
+    reference_frame = input_json['reference_frame'] # byte64 img
     desc = input_json['desc'] # string
     metadata = input_json['metadata'] # json
-    response = handle_stream(question, reference_frame, desc, metadata)
-    return response
+    return Response(handle_stream(question, reference_frame, desc, metadata),
+                    content_type='text/event-stream',  # Content type for Server-Sent Events
+                    status=200)
+
+@app.route('/reset', methods=['POST'])
+def clear_stream():
+    stream = []
+    return "success"
 
 if __name__=="__main__":
-    app.run(port=port)
+    app.run(port=port, debug=True, threaded=True)
     # play_sample_stream() # uncomment this to test run a static stream
