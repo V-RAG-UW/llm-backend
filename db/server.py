@@ -51,7 +51,7 @@ def upload_video():
             extraction_type=SceneExtractionType.shot_based,
             extraction_config={
                 "threshold": 20,
-                "frame_count": 3
+                "frame_count": 1
             },
         )
         video.index_spoken_words()
