@@ -6,6 +6,7 @@ import cv2
 import torch
 import numpy as np
 import tempfile
+import requests
 from huggingface_hub import hf_hub_download
 from transformers import pipeline
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
@@ -90,13 +91,69 @@ def getMetaData(video):
 
 @app.route('/process_video', methods=['POST'])
 def process_video():
-    print(f"I hate certain minorities: {request.files}")
     if 'video' not in request.files:
         return jsonify({"error": "No video file provided"}), 400
     
     video_file = request.files['video']
     metadata = getMetaData(video_file)
+    rag_response = call_rag_pipeline(visual_query=metadata["description"], audio_query=metadata["transcription"])
+    if isinstance(rag_response, tuple):
+        return jsonify(rag_response[0]), rag_response[1]
+    
     return jsonify(metadata), 200
+
+BASE_DB_URL = "http://127.0.0.1:6969"
+def call_rag_pipeline(visual_query, audio_query):
+    try:
+        # Prepare the payload for the RAG pipeline API
+        payload = {
+            "visual_query": visual_query,
+            "audio_query": audio_query
+        }
+        
+        # Send POST request to the localhost RAG pipeline endpoint
+        response = requests.post('http://localhost/rag_pipeline', json=payload)
+        
+        # Check for successful response
+        if response.status_code == 200:
+            return response.json()
+        else:
+            # Ensure the response is JSON or provide detailed feedback
+            if 'application/json' in response.headers.get('Content-Type', ''):
+                return {"error": response.json().get("error", "An unknown error occurred")}, response.status_code
+            else:
+                return {
+                    "error": f"Unexpected response format: {response.text[:100]}",
+                    "status_code": response.status_code
+                }, response.status_code
+        
+    except requests.exceptions.JSONDecodeError:
+        return {"error": "Failed to decode JSON from the response"}, 500
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+BASE_LLM_URL= "https://311f-72-33-2-197.ngrok-free.app/"
+def generate_completions(question, reference_frame, scene_description, rag_metadata):
+    try:
+        # Prepare data for calling the RAG pipeline
+        payload = {
+            "question": question,
+            "reference_frame": reference_frame,
+            "desc": scene_description,
+            "metadata": rag_metadata,
+        }
+        
+        # Send a POST request to the /get_response endpoint
+        response = requests.post(f'{BASE_LLM_URL}/get_response', json=payload)
+        
+        # Check the response status code
+        if response.status_code == 200:
+            return response.text  # Return the response as a string
+        else:
+            return f"Error: Received status code {response.status_code} with message: {response.text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 
 if __name__ == '__main__':
     app.run(port=5000)

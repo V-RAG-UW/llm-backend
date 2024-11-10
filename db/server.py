@@ -155,7 +155,7 @@ async def search_rag():
         visual_query = request.json.get('visual_query')
         audio_query = request.json.get('audio_query')
         
-        if not visual_query or not audio_query:
+        if not visual_query and not audio_query:
             return jsonify({"error": "No search query provided"}), 400
         
         # Start benchmark timing
