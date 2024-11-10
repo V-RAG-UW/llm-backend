@@ -1,3 +1,5 @@
+import asyncio
+import httpx
 from langchain_community.chat_models import ChatOllama
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts.chat import ChatPromptTemplate, PromptTemplate
@@ -65,25 +67,27 @@ def get_comparison(reference_frames, frame):
     response = chain.invoke({})
     return response
 
-def url_to_pil(url):
-    response = requests.get(url)
-    response.raise_for_status()
-    img = Image.open(BytesIO(response.content))
-    return img
+async def url_to_pil_async(url):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        img = Image.open(BytesIO(response.content))
+        return img
 
-def pil_to_base64(img, format="JPEG"):
+async def pil_to_base64_async(img, format="JPEG"):
     buffered = BytesIO()
     img.save(buffered, format=format)
     img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return f"data:image/png;base64,{img_base64}"
 
-def generate_context(metadata, reference_frame):
+async def generate_context_async(metadata, reference_frame):
     context = []
     for result in metadata['result']:
         reference_frames = []
-        for item in result['scenes']:
-            for frame in item['frames']:
-                reference_frames.append(pil_to_base64(url_to_pil(frame)))
+        frame_tasks = [url_to_pil_async(frame) for item in result['scenes'] for frame in item['frames']]
+        frames = await asyncio.gather(*frame_tasks)
+        for img in frames:
+            reference_frames.append(await pil_to_base64_async(img))
         resp = get_comparison(reference_frames, reference_frame)
         context.append({"audio_transcription": result['transcription'], "difference_to_user": resp})
     return context
@@ -127,7 +131,7 @@ def handle_stream(question, reference_frame, desc, metadata):
     """
     )
     global stream_list
-    context = generate_context(metadata, reference_frame)
+    context = asyncio.run(generate_context_async(metadata, reference_frame))
     rag_chain = prompt | llama | StrOutputParser()
     generation = []
     for part in rag_chain.stream({"context": context, "desc": {desc}, "stream_content": stream_list, "question": question, "length": 2}):
@@ -181,7 +185,8 @@ def handle_http_request():
 
 @app.route('/reset', methods=['POST'])
 def clear_stream():
-    stream = []
+    global stream_list
+    stream_list = []
     return "success"
 
 if __name__=="__main__":
