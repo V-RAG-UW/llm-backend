@@ -83,7 +83,7 @@ async def process_result_async(result: NodeWithScore, conn) -> dict:
     video = conn.get_collection().get_video(result.metadata["video_id"])
     # Print with expanded length
     title = result.node.metadata["title"]
-    text = result.text
+    text = "" # result.text apparently returns the transcript if its a audio query. But we already do it at the bottom so no need!
     scene_collection = video.get_scene_collection(video.list_scene_collection()[0]["scene_collection_id"])
     scenes = scene_collection.scenes
     frames = []
@@ -125,36 +125,43 @@ def union_nodes(list1: List[NodeWithScore], list2: List[NodeWithScore]) -> List[
     return list(node_dict.values())
 
 # Usage in the retrieval function
-async def retrieval(query: str, type) -> List[dict]:
-    # Run both retrievals concurrently
-    spoken_results = retriever_spoken_words.retrieve(query)
-    scene_results = retriever_scene.retrieve(query)
-    
-    print("length of spoken results: " ,len(spoken_results))
-    print("length of scene results: " ,len(scene_results))
+async def retrieval(visual_query: str, audio_query: str) -> List[dict]:
+    # Run both retrievals asynchronously in separate threads
+    spoken_words_task = asyncio.to_thread(retriever_spoken_words.retrieve, audio_query) if audio_query else []
+    scene_task = asyncio.to_thread(retriever_scene.retrieve, visual_query) if visual_query else []
+
+    # Await the tasks concurrently
+    spoken_results, scene_results = await asyncio.gather(
+        spoken_words_task if spoken_words_task else [],
+        scene_task if scene_task else []
+    )
+
+    print("Length of spoken results:", len(spoken_results))
+    print("Length of scene results:", len(scene_results))
 
     # Combine results using the custom union function
     combined_results = union_nodes(spoken_results, scene_results)
-    
+
     # Process the combined results
     tasks = [process_result_async(result, conn) for result in combined_results]
     response = await asyncio.gather(*tasks)
-    
+
     return response
+
 
 @app.route('/rag_pipeline', methods=['POST'])
 async def search_rag():
     try:
-        query = request.json.get('query')
-        type = request.json.get('type')
+        visual_query = request.json.get('visual_query')
+        audio_query = request.json.get('audio_query')
         
-        if not query:
+        if not visual_query or not audio_query:
             return jsonify({"error": "No search query provided"}), 400
         
         # Start benchmark timing
         start_time = time.time()
         
-        result = await retrieval(query, type)
+        result = await retrieval(audio_query=audio_query, visual_query=visual_query)
         
         # End benchmark timing
         end_time = time.time()
