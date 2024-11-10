@@ -183,5 +183,5 @@ def clear_stream():
     return "success"
 
 if __name__=="__main__":
-    app.run(port=port, debug=True, threaded=True)
+    app.run(port=port, threaded=True)
     # play_sample_stream() # uncomment this to test run a static stream
