@@ -1,6 +1,8 @@
 import uuid
+import logging
 from pyngrok import ngrok
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import av
 import cv2
 import torch
@@ -11,6 +13,11 @@ from transformers import pipeline
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from transformers import LlavaNextVideoForConditionalGeneration, LlavaNextVideoProcessor
 # Load the model in half-precision
+
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 model = LlavaNextVideoForConditionalGeneration.from_pretrained("llava-hf/LLaVA-NeXT-Video-7B-hf", torch_dtype=torch.float16, device_map="cuda")
 processor = LlavaNextVideoProcessor.from_pretrained("llava-hf/LLaVA-NeXT-Video-7B-hf")
 whisper = pipeline("automatic-speech-recognition", "openai/whisper-tiny.en", torch_dtype=torch.float16, device="cuda:0")
@@ -26,7 +33,7 @@ port = 5000
 endpoint = ngrok.connect(port).public_url
 print(endpoint)
 app = Flask(__name__)
-
+CORS(app)
 def read_video_cv2(video_path, num_frames=10):
     frames = []
     cap = cv2.VideoCapture(video_path)
@@ -49,7 +56,10 @@ def read_video_cv2(video_path, num_frames=10):
     return np.stack(frames)
 
 def getTranscription(video_path):
-    return whisper(video_path)
+    logger.debug("Generating transcription")
+    trans = whisper(video_path)
+    logger.debug(f"trans: {trans}")
+    return trans
 
 def getDescription(video_path):
     # Read 10 evenly spaced frames from video
@@ -69,33 +79,34 @@ def getDescription(video_path):
             ],
         },
     ]
-
     prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
     inputs = processor(text=prompt, videos=video, return_tensors="pt").to(device)
 
     out = model.generate(**inputs, max_new_tokens=200)
     ret = processor.batch_decode(out, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-    
+    logger.debug(f"disc: {ret[0].split("ASSISTANT:")[1].strip()}")
     return ret[0].split("ASSISTANT:")[1].strip()
 def getMetaData(video):
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_video_file:
-        temp_video_path = temp_video_file.name
-        temp_video_file.write(video.read())  # Assuming 'video' is a file-like object
+    logger.debug("About to read webm")
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as temp_webm_file:
+        temp_webm_path = temp_webm_file.name
+        temp_webm_file.write(video.read())
+        logger.debug("Finished Reading webm")
     metadata = {
-        "transcription": getTranscription(temp_video_path),
-        "description": getDescription(temp_video_path)
+        "transcription": getTranscription(temp_webm_path),
+        "description": getDescription(temp_webm_path)
     }
     
     return metadata
 
 @app.route('/process_video', methods=['POST'])
 def process_video():
-    print(f"I hate certain minorities: {request.files}")
+    logger.debug("Obtained a request")
     if 'video' not in request.files:
         return jsonify({"error": "No video file provided"}), 400
-    
     video_file = request.files['video']
     metadata = getMetaData(video_file)
+    logger.debug(f"final data: {metadata}")
     return jsonify(metadata), 200
 
 if __name__ == '__main__':
