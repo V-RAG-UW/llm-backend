@@ -68,10 +68,11 @@ async def convert_frame_to_base64_async(frame_url: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(frame_url) as response:
-                response.raise_for_status()
-                content = await response.read()
-                encoded_string = base64.b64encode(content).decode('utf-8')
-                return encoded_string
+                # response.raise_for_status()
+                # content = await response.read()
+                # encoded_string = base64.b64encode(content).decode('utf-8')
+                # return encoded_string
+                return frame_url
     except Exception as e:
         return f"Error encoding frame: {str(e)}"
 
@@ -104,13 +105,41 @@ async def process_result_async(result: NodeWithScore, conn) -> dict:
         "transcription": video.get_transcript_text()
     }
 
-async def retrieval(query: str, type):
-    if type == 'scene':
-        results: List[NodeWithScore] = retriever_scene.retrieve(query)
-    else:
-        results: List[NodeWithScore] = retriever_spoken_words.retrieve(query)
-    tasks = [process_result_async(result, conn) for result in results]
+def union_nodes(list1: List[NodeWithScore], list2: List[NodeWithScore]) -> List[NodeWithScore]:
+    # Create a dictionary to store nodes by their video_id
+    node_dict = {}
+
+    # Add nodes from the first list to the dictionary
+    for node in list1:
+        video_id = node.metadata["video_id"]
+        if video_id not in node_dict:
+            node_dict[video_id] = node
+
+    # Add nodes from the second list, avoiding duplicates by video_id
+    for node in list2:
+        video_id = node.metadata["video_id"]
+        if video_id not in node_dict:
+            node_dict[video_id] = node
+
+    # Return the unique nodes as a list
+    return list(node_dict.values())
+
+# Usage in the retrieval function
+async def retrieval(query: str, type) -> List[dict]:
+    # Run both retrievals concurrently
+    spoken_results = retriever_spoken_words.retrieve(query)
+    scene_results = retriever_scene.retrieve(query)
+    
+    print("length of spoken results: " ,len(spoken_results))
+    print("length of scene results: " ,len(scene_results))
+
+    # Combine results using the custom union function
+    combined_results = union_nodes(spoken_results, scene_results)
+    
+    # Process the combined results
+    tasks = [process_result_async(result, conn) for result in combined_results]
     response = await asyncio.gather(*tasks)
+    
     return response
 
 @app.route('/rag_pipeline', methods=['POST'])
